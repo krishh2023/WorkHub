@@ -1,0 +1,31 @@
+services:
+  backend:
+    build: ./backend
+    container_name: employee_portal_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_db:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///./data/employee_portal.db
+    command: sh -c "mkdir -p /app/data && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    networks:
+      - portal_network
+
+  frontend:
+    build: ./frontend
+    container_name: employee_portal_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - portal_network
+
+volumes:
+  backend_db:
+
+networks:
+  portal_network:
+    driver: bridge
