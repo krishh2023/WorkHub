@@ -1,7 +1,8 @@
 from app.database import SessionLocal, engine
-from app.models import Base, User, DashboardConfig, CompliancePolicy, LearningContent
+from app.models import Base, User, DashboardConfig, CompliancePolicy, LearningContent, LeaveBalance
 from app.auth import get_password_hash
 import json
+from datetime import datetime
 
 Base.metadata.create_all(bind=engine)
 
@@ -162,6 +163,22 @@ try:
                 description=content_data["description"]
             )
             db.add(content)
+    
+    current_year = datetime.now().year
+    for user in db.query(User).filter(User.role == "employee").all():
+        existing_balance = db.query(LeaveBalance).filter(
+            LeaveBalance.user_id == user.id,
+            LeaveBalance.year == current_year
+        ).first()
+        if not existing_balance:
+            balance = LeaveBalance(
+                user_id=user.id,
+                total_leaves=20,
+                used_leaves=0,
+                remaining_leaves=20,
+                year=current_year
+            )
+            db.add(balance)
     
     db.commit()
     print("Database seeded successfully!")

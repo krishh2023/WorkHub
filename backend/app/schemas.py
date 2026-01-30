@@ -128,3 +128,36 @@ class ChatbotRequest(BaseModel):
 
 class ChatbotResponse(BaseModel):
     response: str
+
+
+class LeaveBalanceResponse(BaseModel):
+    user_id: int
+    user_name: str
+    total_leaves: int
+    used_leaves: int
+    remaining_leaves: int
+    year: int
+    
+    class Config:
+        from_attributes = True
+
+
+class CalendarEvent(BaseModel):
+    leave_id: int
+    employee_id: int
+    employee_name: str
+    from_date: date
+    to_date: date
+    reason: str
+    status: str
+    has_conflict: bool = False
+
+
+class TeamCalendarResponse(BaseModel):
+    events: List[CalendarEvent] = []
+    conflicts: List[dict] = []
+
+
+class BulkLeaveApprovalRequest(BaseModel):
+    leave_ids: List[int]
+    status: str
