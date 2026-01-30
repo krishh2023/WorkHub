@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, LearningContent, CompliancePolicy
@@ -110,4 +110,41 @@ def get_recommendations(
             ) for p in compliance_list[:5]
         ],
         explanations=explanations[:5]
+    )
+
+
+@router.get("/team-compliance", response_model=RecommendationResponse)
+def get_team_compliance(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only managers can access team compliance"
+        )
+    
+    all_compliance = db.query(CompliancePolicy).filter(
+        CompliancePolicy.department == current_user.department
+    ).all()
+    
+    compliance_list = []
+    today = date.today()
+    for policy in all_compliance:
+        compliance_list.append(policy)
+    
+    compliance_list.sort(key=lambda x: x.due_date)
+    
+    return RecommendationResponse(
+        learning_content=[],
+        compliance_policies=[
+            CompliancePolicyResponse(
+                id=p.id,
+                title=p.title,
+                department=p.department,
+                due_date=p.due_date,
+                description=p.description
+            ) for p in compliance_list
+        ],
+        explanations=[]
     )

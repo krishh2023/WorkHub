@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, LeaveRequest, DashboardConfig, CompliancePolicy, LearningContent
+from app.models import User, LeaveRequest, DashboardConfig, CompliancePolicy, LearningContent, LeaveBalance
 from app.schemas import DashboardData, DashboardConfigUpdate, DashboardConfigResponse, LeaveRequestResponse, UserResponse
 from app.dependencies import get_current_user
-from datetime import date
+from datetime import date, datetime
 import json
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -67,15 +67,42 @@ def get_dashboard(
             User.department == current_user.department,
             User.role == "employee"
         ).all()
+        
+        today = date.today()
+        current_year = datetime.now().year
+        
+        team_members_with_status = []
+        for u in team_members:
+            current_leave = db.query(LeaveRequest).filter(
+                LeaveRequest.employee_id == u.id,
+                LeaveRequest.status == "Approved",
+                LeaveRequest.from_date <= today,
+                LeaveRequest.to_date >= today
+            ).first()
+            
+            availability_status = "On Leave" if current_leave else "Available"
+            
+            member_data = {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "role": u.role,
+                "department": u.department,
+                "skills": json.loads(u.skills) if u.skills else [],
+                "availability_status": availability_status,
+                "current_leave": current_leave.reason if current_leave else None
+            }
+            team_members_with_status.append(member_data)
+        
         dashboard_data.team_members = [
             UserResponse(
-                id=u.id,
-                name=u.name,
-                email=u.email,
-                role=u.role,
-                department=u.department,
-                skills=json.loads(u.skills) if u.skills else []
-            ) for u in team_members
+                id=m["id"],
+                name=m["name"],
+                email=m["email"],
+                role=m["role"],
+                department=m["department"],
+                skills=m["skills"]
+            ) for m in team_members_with_status
         ]
         
         pending_leaves = db.query(LeaveRequest).filter(
@@ -94,6 +121,14 @@ def get_dashboard(
                 employee_name=l.employee.name
             ) for l in pending_leaves
         ]
+        
+        team_stats = {
+            "total_team_size": len(team_members),
+            "on_leave_count": len([m for m in team_members_with_status if m["availability_status"] == "On Leave"]),
+            "available_count": len([m for m in team_members_with_status if m["availability_status"] == "Available"]),
+            "pending_approvals": len(pending_leaves)
+        }
+        dashboard_data.recommendations = team_stats
     
     return dashboard_data
 

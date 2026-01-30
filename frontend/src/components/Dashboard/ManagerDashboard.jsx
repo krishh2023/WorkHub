@@ -1,11 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Container, Typography, Box, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Grid } from '@mui/material';
+import { Container, Typography, Box, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Grid, Tabs, Tab, Checkbox, TextField, InputAdornment } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
 import DashboardCard from './DashboardCard';
+import TeamStats from './TeamStats';
+import TeamOverview from './TeamOverview';
+import LeaveCalendar from '../Leave/LeaveCalendar';
+import LeaveBalances from '../Leave/LeaveBalances';
+import TeamCompliance from './TeamCompliance';
 import api from '../../services/api';
 import { format } from 'date-fns';
 
 const ManagerDashboard = () => {
   const [dashboardData, setDashboardData] = useState(null);
+  const [tabValue, setTabValue] = useState(0);
+  const [selectedLeaves, setSelectedLeaves] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     loadDashboard();
@@ -24,9 +33,47 @@ const ManagerDashboard = () => {
     try {
       await api.post('/leave/approve', { leave_id: leaveId, status });
       loadDashboard();
+      setSelectedLeaves(selectedLeaves.filter(id => id !== leaveId));
     } catch (error) {
       console.error('Failed to update leave:', error);
       alert(error.response?.data?.detail || 'Failed to update leave');
+    }
+  };
+
+  const handleBulkApprove = async (status) => {
+    if (selectedLeaves.length === 0) {
+      alert('Please select at least one leave request');
+      return;
+    }
+    
+    try {
+      await api.post('/leave/bulk-approve', {
+        leave_ids: selectedLeaves,
+        status: status
+      });
+      loadDashboard();
+      setSelectedLeaves([]);
+      alert(`Successfully ${status.toLowerCase()} ${selectedLeaves.length} leave request(s)`);
+    } catch (error) {
+      console.error('Failed to bulk update:', error);
+      alert(error.response?.data?.detail || 'Failed to bulk update leaves');
+    }
+  };
+
+  const handleSelectAll = (event) => {
+    if (event.target.checked) {
+      const allIds = filteredPendingLeaves.map(leave => leave.id);
+      setSelectedLeaves(allIds);
+    } else {
+      setSelectedLeaves([]);
+    }
+  };
+
+  const handleSelectOne = (leaveId) => {
+    if (selectedLeaves.includes(leaveId)) {
+      setSelectedLeaves(selectedLeaves.filter(id => id !== leaveId));
+    } else {
+      setSelectedLeaves([...selectedLeaves, leaveId]);
     }
   };
 
@@ -34,85 +81,186 @@ const ManagerDashboard = () => {
     return <div>Loading...</div>;
   }
 
+  const filteredPendingLeaves = dashboardData.pending_leaves?.filter(leave => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      leave.employee_name?.toLowerCase().includes(searchLower) ||
+      leave.reason?.toLowerCase().includes(searchLower)
+    );
+  }) || [];
+
+  const teamAvailabilityData = dashboardData.team_members?.map(member => {
+    const currentLeave = dashboardData.pending_leaves?.find(
+      leave => leave.employee_id === member.id && leave.status === 'Approved'
+    );
+    return {
+      id: member.id,
+      availability_status: currentLeave ? 'On Leave' : 'Available',
+      current_leave: currentLeave?.reason
+    };
+  }) || [];
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" gutterBottom>
         Manager Dashboard
       </Typography>
 
-      <Grid container spacing={3} sx={{ mt: 2 }}>
-        <Grid item xs={12} md={6}>
-          <DashboardCard title="Team Members">
-            {dashboardData.team_members && dashboardData.team_members.length > 0 ? (
-              <Box>
-                {dashboardData.team_members.map((member) => (
-                  <Box key={member.id} sx={{ mb: 1, p: 1 }}>
-                    <Typography variant="body1">{member.name}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {member.email}
-                    </Typography>
-                  </Box>
-                ))}
-              </Box>
-            ) : (
-              <Typography color="text.secondary">No team members</Typography>
-            )}
-          </DashboardCard>
-        </Grid>
+      <TeamStats stats={dashboardData.recommendations} />
 
-        <Grid item xs={12}>
-          <DashboardCard title="Pending Leave Requests">
-            {dashboardData.pending_leaves && dashboardData.pending_leaves.length > 0 ? (
-              <TableContainer component={Paper}>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Employee</TableCell>
-                      <TableCell>From Date</TableCell>
-                      <TableCell>To Date</TableCell>
-                      <TableCell>Reason</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {dashboardData.pending_leaves.map((leave) => (
-                      <TableRow key={leave.id}>
-                        <TableCell>{leave.employee_name || 'N/A'}</TableCell>
-                        <TableCell>{format(new Date(leave.from_date), 'MMM dd, yyyy')}</TableCell>
-                        <TableCell>{format(new Date(leave.to_date), 'MMM dd, yyyy')}</TableCell>
-                        <TableCell>{leave.reason}</TableCell>
-                        <TableCell>
-                          <Chip label={leave.status} color="warning" size="small" />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            size="small"
-                            color="success"
-                            onClick={() => handleApprove(leave.id, 'Approved')}
-                            sx={{ mr: 1 }}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="small"
-                            color="error"
-                            onClick={() => handleApprove(leave.id, 'Rejected')}
-                          >
-                            Reject
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            ) : (
-              <Typography color="text.secondary">No pending leave requests</Typography>
-            )}
-          </DashboardCard>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mt: 3, mb: 3 }}>
+        <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
+          <Tab label="Team Overview" />
+          <Tab label="Leave Management" />
+          <Tab label="Leave Calendar" />
+          <Tab label="Leave Balances" />
+          <Tab label="Compliance" />
+        </Tabs>
+      </Box>
+
+      {tabValue === 0 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TeamOverview
+              teamMembers={dashboardData.team_members}
+              availabilityData={teamAvailabilityData}
+            />
+          </Grid>
         </Grid>
-      </Grid>
+      )}
+
+      {tabValue === 1 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <DashboardCard title="Pending Leave Requests">
+              {dashboardData.pending_leaves && dashboardData.pending_leaves.length > 0 ? (
+                <>
+                  <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+                    <TextField
+                      size="small"
+                      placeholder="Search by employee or reason..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon />
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ flexGrow: 1, maxWidth: 400 }}
+                    />
+                    {selectedLeaves.length > 0 && (
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="success"
+                          onClick={() => handleBulkApprove('Approved')}
+                        >
+                          Approve Selected ({selectedLeaves.length})
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="error"
+                          onClick={() => handleBulkApprove('Rejected')}
+                        >
+                          Reject Selected ({selectedLeaves.length})
+                        </Button>
+                      </Box>
+                    )}
+                  </Box>
+                  <TableContainer component={Paper}>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell padding="checkbox">
+                            <Checkbox
+                              checked={selectedLeaves.length === filteredPendingLeaves.length && filteredPendingLeaves.length > 0}
+                              indeterminate={selectedLeaves.length > 0 && selectedLeaves.length < filteredPendingLeaves.length}
+                              onChange={handleSelectAll}
+                            />
+                          </TableCell>
+                          <TableCell>Employee</TableCell>
+                          <TableCell>From Date</TableCell>
+                          <TableCell>To Date</TableCell>
+                          <TableCell>Reason</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {filteredPendingLeaves.map((leave) => (
+                          <TableRow key={leave.id}>
+                            <TableCell padding="checkbox">
+                              <Checkbox
+                                checked={selectedLeaves.includes(leave.id)}
+                                onChange={() => handleSelectOne(leave.id)}
+                              />
+                            </TableCell>
+                            <TableCell>{leave.employee_name || 'N/A'}</TableCell>
+                            <TableCell>{format(new Date(leave.from_date), 'MMM dd, yyyy')}</TableCell>
+                            <TableCell>{format(new Date(leave.to_date), 'MMM dd, yyyy')}</TableCell>
+                            <TableCell>{leave.reason}</TableCell>
+                            <TableCell>
+                              <Chip label={leave.status} color="warning" size="small" />
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                size="small"
+                                color="success"
+                                onClick={() => handleApprove(leave.id, 'Approved')}
+                                sx={{ mr: 1 }}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                size="small"
+                                color="error"
+                                onClick={() => handleApprove(leave.id, 'Rejected')}
+                              >
+                                Reject
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              ) : (
+                <Typography color="text.secondary">No pending leave requests</Typography>
+              )}
+            </DashboardCard>
+          </Grid>
+        </Grid>
+      )}
+
+      {tabValue === 2 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <LeaveCalendar />
+          </Grid>
+        </Grid>
+      )}
+
+      {tabValue === 3 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <LeaveBalances />
+          </Grid>
+        </Grid>
+      )}
+
+      {tabValue === 4 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TeamCompliance teamMembers={dashboardData.team_members} />
+          </Grid>
+        </Grid>
+      )}
     </Container>
   );
 };

@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import LeaveRequest, User
-from app.schemas import LeaveRequestCreate, LeaveRequestResponse, LeaveApprovalRequest
+from app.models import LeaveRequest, User, LeaveBalance
+from app.schemas import (
+    LeaveRequestCreate, LeaveRequestResponse, LeaveApprovalRequest,
+    LeaveBalanceResponse, TeamCalendarResponse, CalendarEvent,
+    BulkLeaveApprovalRequest
+)
 from app.dependencies import get_current_user, require_role
-from datetime import date
+from datetime import date, datetime, timedelta
+from typing import Optional, List
+import json
 
 router = APIRouter(prefix="/leave", tags=["leave"])
 
@@ -110,4 +116,220 @@ def approve_leave(
     leave.status = approval.status
     db.commit()
     db.refresh(leave)
+    
+    if approval.status == "Approved":
+        current_year = datetime.now().year
+        balance = db.query(LeaveBalance).filter(
+            LeaveBalance.user_id == leave.employee_id,
+            LeaveBalance.year == current_year
+        ).first()
+        
+        if balance:
+            days_diff = (leave.to_date - leave.from_date).days + 1
+            balance.used_leaves += days_diff
+            balance.remaining_leaves = balance.total_leaves - balance.used_leaves
+            db.commit()
+        else:
+            days_diff = (leave.to_date - leave.from_date).days + 1
+            new_balance = LeaveBalance(
+                user_id=leave.employee_id,
+                total_leaves=20,
+                used_leaves=days_diff,
+                remaining_leaves=20 - days_diff,
+                year=current_year
+            )
+            db.add(new_balance)
+            db.commit()
+    
     return leave
+
+
+@router.get("/team-calendar", response_model=TeamCalendarResponse)
+def get_team_calendar(
+    current_user: User = Depends(require_role("manager")),
+    db: Session = Depends(get_db),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None)
+):
+    if not start_date:
+        start_date = date.today()
+    if not end_date:
+        end_date = start_date + timedelta(days=90)
+    
+    team_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.department == current_user.department,
+        LeaveRequest.from_date <= end_date,
+        LeaveRequest.to_date >= start_date
+    ).join(User).all()
+    
+    events = []
+    date_employee_map = {}
+    conflicts = []
+    
+    for leave in team_leaves:
+        event = CalendarEvent(
+            leave_id=leave.id,
+            employee_id=leave.employee_id,
+            employee_name=leave.employee.name,
+            from_date=leave.from_date,
+            to_date=leave.to_date,
+            reason=leave.reason,
+            status=leave.status
+        )
+        
+        current_date = leave.from_date
+        while current_date <= leave.to_date:
+            if current_date not in date_employee_map:
+                date_employee_map[current_date] = []
+            date_employee_map[current_date].append(leave.employee_id)
+            current_date += timedelta(days=1)
+        
+        events.append(event)
+    
+    for event in events:
+        current_date = event.from_date
+        while current_date <= event.to_date:
+            if len(date_employee_map.get(current_date, [])) > 1:
+                event.has_conflict = True
+                conflict_date = current_date.isoformat()
+                if conflict_date not in [c.get("date") for c in conflicts]:
+                    conflicts.append({
+                        "date": conflict_date,
+                        "employee_count": len(date_employee_map[current_date])
+                    })
+            current_date += timedelta(days=1)
+    
+    return TeamCalendarResponse(events=events, conflicts=conflicts)
+
+
+@router.get("/balances", response_model=List[LeaveBalanceResponse])
+def get_team_leave_balances(
+    current_user: User = Depends(require_role("manager")),
+    db: Session = Depends(get_db)
+):
+    current_year = datetime.now().year
+    team_members = db.query(User).filter(
+        User.department == current_user.department,
+        User.role == "employee"
+    ).all()
+    
+    balances = []
+    for member in team_members:
+        balance = db.query(LeaveBalance).filter(
+            LeaveBalance.user_id == member.id,
+            LeaveBalance.year == current_year
+        ).first()
+        
+        if balance:
+            balances.append(LeaveBalanceResponse(
+                user_id=member.id,
+                user_name=member.name,
+                total_leaves=balance.total_leaves,
+                used_leaves=balance.used_leaves,
+                remaining_leaves=balance.remaining_leaves,
+                year=balance.year
+            ))
+        else:
+            balances.append(LeaveBalanceResponse(
+                user_id=member.id,
+                user_name=member.name,
+                total_leaves=20,
+                used_leaves=0,
+                remaining_leaves=20,
+                year=current_year
+            ))
+    
+    return balances
+
+
+@router.get("/history", response_model=List[LeaveRequestResponse])
+def get_leave_history(
+    current_user: User = Depends(require_role("manager")),
+    db: Session = Depends(get_db),
+    status_filter: Optional[str] = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    employee_id: Optional[int] = Query(None)
+):
+    query = db.query(LeaveRequest).filter(
+        LeaveRequest.department == current_user.department
+    ).join(User)
+    
+    if status_filter:
+        query = query.filter(LeaveRequest.status == status_filter)
+    if start_date:
+        query = query.filter(LeaveRequest.from_date >= start_date)
+    if end_date:
+        query = query.filter(LeaveRequest.to_date <= end_date)
+    if employee_id:
+        query = query.filter(LeaveRequest.employee_id == employee_id)
+    
+    leaves = query.order_by(LeaveRequest.from_date.desc()).all()
+    
+    return [
+        LeaveRequestResponse(
+            id=l.id,
+            employee_id=l.employee_id,
+            department=l.department,
+            from_date=l.from_date,
+            to_date=l.to_date,
+            reason=l.reason,
+            status=l.status,
+            employee_name=l.employee.name
+        ) for l in leaves
+    ]
+
+
+@router.post("/bulk-approve")
+def bulk_approve_leaves(
+    bulk_request: BulkLeaveApprovalRequest,
+    current_user: User = Depends(require_role("manager")),
+    db: Session = Depends(get_db)
+):
+    if bulk_request.status not in ["Approved", "Rejected"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Status must be 'Approved' or 'Rejected'"
+        )
+    
+    leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.id.in_(bulk_request.leave_ids),
+        LeaveRequest.department == current_user.department,
+        LeaveRequest.status == "Pending"
+    ).all()
+    
+    if len(leaves) != len(bulk_request.leave_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Some leave requests not found or already processed"
+        )
+    
+    current_year = datetime.now().year
+    updated_count = 0
+    
+    for leave in leaves:
+        leave.status = bulk_request.status
+        if bulk_request.status == "Approved":
+            balance = db.query(LeaveBalance).filter(
+                LeaveBalance.user_id == leave.employee_id,
+                LeaveBalance.year == current_year
+            ).first()
+            
+            if balance:
+                days_diff = (leave.to_date - leave.from_date).days + 1
+                balance.used_leaves += days_diff
+                balance.remaining_leaves = balance.total_leaves - balance.used_leaves
+            else:
+                days_diff = (leave.to_date - leave.from_date).days + 1
+                new_balance = LeaveBalance(
+                    user_id=leave.employee_id,
+                    total_leaves=20,
+                    used_leaves=days_diff,
+                    remaining_leaves=20 - days_diff,
+                    year=current_year
+                )
+                db.add(new_balance)
+        updated_count += 1
+    
+    db.commit()
+    return {"message": f"Successfully updated {updated_count} leave requests", "updated_count": updated_count}

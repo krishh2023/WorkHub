@@ -77,6 +77,17 @@ class DashboardConfig(Base):
     user = relationship("User", back_populates="dashboard_config")
 
 
+class LeaveBalance(Base):
+    __tablename__ = "leave_balances"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    total_leaves = Column(Integer, default=20)
+    used_leaves = Column(Integer, default=0)
+    remaining_leaves = Column(Integer, default=20)
+    year = Column(Integer, nullable=False)
+
+
 class UserDocument(Base):
     __tablename__ = "user_documents"
     
