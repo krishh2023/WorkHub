@@ -1,140 +1,184 @@
 import { useState, useEffect } from 'react';
-import { Container, Grid, Button, Typography, Box, Chip } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import {
+  Container,
+  Grid,
+  Typography,
+  Box,
+  Paper,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
+  Button,
+  Collapse,
+} from '@mui/material';
 import DashboardCard from './DashboardCard';
-import PersonalizationPanel from './PersonalizationPanel';
+import PersonIcon from '@mui/icons-material/Person';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import EventIcon from '@mui/icons-material/Event';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import SchoolIcon from '@mui/icons-material/School';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import PolicyIcon from '@mui/icons-material/Policy';
+import SettingsIcon from '@mui/icons-material/Settings';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import api from '../../services/api';
-import { format } from 'date-fns';
+
+const MODULES = [
+  { title: 'My Profile', description: 'View and update your profile', to: '/profile', icon: PersonIcon, configKey: 'profile' },
+  { title: 'Attendance', description: 'View attendance and timesheets', to: '/attendance', icon: ScheduleIcon, configKey: 'attendance' },
+  { title: 'Leave Management', description: 'Apply and track leave requests', to: '/leave', icon: EventIcon, configKey: 'leave' },
+  { title: 'Payroll & Compensation', description: 'Payslips and compensation', to: '/payroll', icon: AttachMoneyIcon, configKey: 'payroll' },
+  { title: 'Learning & Certifications', description: 'Courses and certifications', to: '/learning', icon: SchoolIcon, configKey: 'learning' },
+  { title: 'Career Growth & Development', description: 'Goals and development plans', to: '/career', icon: TrendingUpIcon, configKey: 'career' },
+  { title: 'Wellness & Engagement', description: 'Wellness programs and engagement', to: '/wellness', icon: FavoriteIcon, configKey: 'wellness' },
+  { title: 'Compliance & Policies', description: 'Policies and compliance tasks', to: '/compliance', icon: PolicyIcon, configKey: 'compliance' },
+];
+
+const defaultConfig = {
+  show_profile: true,
+  show_attendance: true,
+  show_leaves: true,
+  show_payroll: true,
+  show_learning: true,
+  show_career: true,
+  show_wellness: true,
+  show_compliance: true,
+};
 
 const EmployeeDashboard = () => {
-  const [dashboardData, setDashboardData] = useState(null);
-  const [recommendations, setRecommendations] = useState(null);
-  const navigate = useNavigate();
+  const [config, setConfig] = useState(defaultConfig);
+  const [localConfig, setLocalConfig] = useState(defaultConfig);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [personalizeOpen, setPersonalizeOpen] = useState(false);
 
   useEffect(() => {
-    loadDashboard();
-    loadRecommendations();
+    const load = async () => {
+      try {
+        const res = await api.get('/dashboard');
+        const c = res.data?.config || defaultConfig;
+        setConfig(c);
+        setLocalConfig(c);
+      } catch {
+        setConfig(defaultConfig);
+        setLocalConfig(defaultConfig);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, []);
 
-  const loadDashboard = async () => {
+  const isVisible = (mod) => {
+    const key = mod.configKey;
+    if (key === 'leave') return config.show_leaves !== false;
+    return config[`show_${key}`] !== false;
+  };
+
+  const visibleModules = MODULES.filter(isVisible);
+
+  const handleToggle = (key) => {
+    const field = key === 'leave' ? 'show_leaves' : `show_${key}`;
+    setLocalConfig((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
+  const handleSavePreferences = async () => {
+    setSaving(true);
     try {
-      const response = await api.get('/dashboard');
-      setDashboardData(response.data);
-    } catch (error) {
-      console.error('Failed to load dashboard:', error);
+      const res = await api.post('/dashboard/config', localConfig);
+      setConfig(res.data);
+      setLocalConfig(res.data);
+      setPersonalizeOpen(false);
+    } catch (err) {
+      console.error('Failed to save dashboard preferences:', err);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const loadRecommendations = async () => {
-    try {
-      const response = await api.get('/recommendations');
-      setRecommendations(response.data);
-    } catch (error) {
-      console.error('Failed to load recommendations:', error);
-    }
-  };
-
-  const handleConfigUpdate = (newConfig) => {
-    setDashboardData((prev) => ({
-      ...prev,
-      config: newConfig,
-    }));
-  };
-
-  if (!dashboardData) {
-    return <div>Loading...</div>;
+  if (loading) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Typography>Loading dashboard...</Typography>
+      </Container>
+    );
   }
-
-  const config = dashboardData.config || {
-    show_leaves: true,
-    show_learning: true,
-    show_compliance: true,
-  };
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h4">Employee Dashboard</Typography>
-        <Button variant="contained" onClick={() => navigate('/leave/apply')}>
-          Apply for Leave
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+        <Typography variant="h4" fontWeight={600}>
+          Personalized Employee Dashboard
+        </Typography>
+        <Button
+          startIcon={personalizeOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          endIcon={<SettingsIcon />}
+          variant="outlined"
+          onClick={() => setPersonalizeOpen((o) => !o)}
+        >
+          Personalize dashboard
         </Button>
       </Box>
 
-      <PersonalizationPanel config={config} onUpdate={handleConfigUpdate} />
+      <Collapse in={personalizeOpen}>
+        <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Add or remove cards
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Toggle which module cards appear on your dashboard. Changes are saved when you click Save.
+          </Typography>
+          <FormGroup row sx={{ flexWrap: 'wrap', gap: 1 }}>
+            {MODULES.map((mod) => {
+              const key = mod.configKey;
+              const field = key === 'leave' ? 'show_leaves' : `show_${key}`;
+              const checked = localConfig[field] !== false;
+              return (
+                <FormControlLabel
+                  key={mod.to}
+                  control={
+                    <Checkbox
+                      checked={checked}
+                      onChange={() => handleToggle(key)}
+                      size="small"
+                    />
+                  }
+                  label={mod.title}
+                />
+              );
+            })}
+          </FormGroup>
+          <Button variant="contained" onClick={handleSavePreferences} disabled={saving} sx={{ mt: 2 }}>
+            {saving ? 'Saving...' : 'Save preferences'}
+          </Button>
+        </Paper>
+      </Collapse>
 
-      <Grid container spacing={3}>
-        {config.show_leaves && (
-          <Grid item xs={12} md={6}>
-            <DashboardCard title="Leave Status">
-              {dashboardData.leave_requests && dashboardData.leave_requests.length > 0 ? (
-                <Box>
-                  {dashboardData.leave_requests.map((leave) => (
-                    <Box key={leave.id} sx={{ mb: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1 }}>
-                      <Typography variant="body2">
-                        {format(new Date(leave.from_date), 'MMM dd, yyyy')} - {format(new Date(leave.to_date), 'MMM dd, yyyy')}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {leave.reason}
-                      </Typography>
-                      <Chip
-                        label={leave.status}
-                        color={leave.status === 'Approved' ? 'success' : leave.status === 'Rejected' ? 'error' : 'warning'}
-                        size="small"
-                        sx={{ mt: 1 }}
-                      />
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Typography color="text.secondary">No leave requests</Typography>
-              )}
-            </DashboardCard>
-          </Grid>
-        )}
-
-        {config.show_learning && recommendations && (
-          <Grid item xs={12} md={6}>
-            <DashboardCard title="Learning Recommendations">
-              {recommendations.learning_content && recommendations.learning_content.length > 0 ? (
-                <Box>
-                  {recommendations.learning_content.slice(0, 3).map((content) => (
-                    <Box key={content.id} sx={{ mb: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1 }}>
-                      <Typography variant="subtitle2">{content.title}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {content.description}
-                      </Typography>
-                      <Chip label={content.level} size="small" sx={{ mt: 1 }} />
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Typography color="text.secondary">No recommendations available</Typography>
-              )}
-            </DashboardCard>
-          </Grid>
-        )}
-
-        {config.show_compliance && recommendations && (
-          <Grid item xs={12} md={6}>
-            <DashboardCard title="Compliance Reminders">
-              {recommendations.compliance_policies && recommendations.compliance_policies.length > 0 ? (
-                <Box>
-                  {recommendations.compliance_policies.map((policy) => (
-                    <Box key={policy.id} sx={{ mb: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1 }}>
-                      <Typography variant="subtitle2">{policy.title}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Due: {format(new Date(policy.due_date), 'MMM dd, yyyy')}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Typography color="text.secondary">No compliance reminders</Typography>
-              )}
-            </DashboardCard>
-          </Grid>
-        )}
-      </Grid>
+      {visibleModules.length === 0 ? (
+        <Paper elevation={2} sx={{ p: 4, textAlign: 'center' }}>
+          <Typography color="text.secondary" gutterBottom>
+            No cards visible. Open &quot;Personalize dashboard&quot; and enable at least one card, then Save.
+          </Typography>
+          <Button variant="outlined" onClick={() => setPersonalizeOpen(true)} sx={{ mt: 1 }}>
+            Personalize dashboard
+          </Button>
+        </Paper>
+      ) : (
+        <Grid container spacing={3}>
+          {visibleModules.map((mod) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={mod.to}>
+              <DashboardCard
+                title={mod.title}
+                description={mod.description}
+                to={mod.to}
+                icon={mod.icon}
+              />
+            </Grid>
+          ))}
+        </Grid>
+      )}
     </Container>
   );
 };
