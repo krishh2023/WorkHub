@@ -402,9 +402,6 @@ Provide 5-8 learning suggestions and 3-5 certification suggestions. Be specific 
                 # Accept snake_case or camelCase
                 ls = data.get("learning_suggestions") or data.get("learningSuggestions")
                 cs = data.get("certification_suggestions") or data.get("certificationSuggestions")
-                # #region agent log
-                _dbg("GPT parsed", {"ls_type": type(ls).__name__, "cs_type": type(cs).__name__, "ls_len": len(ls) if isinstance(ls, list) else None, "cs_len": len(cs) if isinstance(cs, list) else None}, "B")
-                # #endregion
                 if isinstance(ls, list) and isinstance(cs, list):
                     ai_learning_suggestions = []
                     for x in [x for x in ls if isinstance(x, dict)][:8]:
@@ -428,9 +425,6 @@ Provide 5-8 learning suggestions and 3-5 certification suggestions. Be specific 
             else:
                 ai_error_message = "gpt_error"
         except Exception as e:
-            # #region agent log
-            _dbg("GPT exception", {"error_type": type(e).__name__, "error_msg": str(e)[:200]}, "C")
-            # #endregion
             ai_fallback = True
             ai_error_message = "gpt_error"
 
@@ -537,9 +531,6 @@ Provide 5-8 learning suggestions and 3-5 certification suggestions. Be specific 
         explanations.insert(0, ai_personalized_summary)
 
     # Merge AI suggestion progress (started/complete) into ai_learning_suggestions and ai_certification_suggestions
-    # #region agent log
-    _dbg("before merge", {"ai_learning_len": len(ai_learning_suggestions) if ai_learning_suggestions else 0, "ai_cert_len": len(ai_certification_suggestions) if ai_certification_suggestions else 0, "ai_fallback": ai_fallback}, "E")
-    # #endregion
     if ai_learning_suggestions or ai_certification_suggestions:
         all_keys = [item["key"] for item in (ai_learning_suggestions or [])] + [item["key"] for item in (ai_certification_suggestions or [])]
         if all_keys:
@@ -563,9 +554,6 @@ Provide 5-8 learning suggestions and 3-5 certification suggestions. Be specific 
             return c.tags
         return json.loads(c.tags) if c.tags else []
 
-    # #region agent log
-    _dbg("before return", {"ai_learning_len": len(ai_learning_suggestions) if ai_learning_suggestions else 0, "ai_cert_len": len(ai_certification_suggestions) if ai_certification_suggestions else 0}, "E")
-    # #endregion
     return RecommendationResponse(
         learning_content=[
             LearningContentResponse(
