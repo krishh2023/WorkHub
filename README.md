@@ -2,6 +2,7 @@
 
 A full-stack employee self-service portal with role-based access control, leave management, AI recommendations, and chatbot functionality.
 
+
 ## Features
 
 - Role-based access control (Employee, Manager, HR Admin)
@@ -21,7 +22,7 @@ A full-stack employee self-service portal with role-based access control, leave 
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Git (optional, for cloning)
+- Git (optional, for cloning) but useful.
 
 ## Getting Started
 
