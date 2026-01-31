@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.models import User, CompliancePolicy, ComplianceCategoryRule, LearningContent, DashboardConfig
+from app.models import User, CompliancePolicy, ComplianceCategoryRule, LearningContent, DashboardConfig, Complaint
 from app.schemas import (
     UserCreate, UserResponse,
     CompliancePolicyCreate, CompliancePolicyResponse,
     ComplianceCategoryRuleCreate, ComplianceCategoryRuleResponse,
     ComplianceCategoryRulesByCategory,
+    ComplaintWithEmployeeResponse,
+    ComplaintStatusUpdate,
     LearningContentCreate, LearningContentResponse
 )
 from app.dependencies import require_role
@@ -181,6 +183,54 @@ def delete_compliance_category_rule(
     db.delete(rule)
     db.commit()
     return {"message": "Category rule deleted successfully"}
+
+
+# HR: list all complaints and update status
+@router.get("/complaints", response_model=List[ComplaintWithEmployeeResponse])
+def list_complaints_hr(
+    current_user: User = Depends(require_role("hr")),
+    db: Session = Depends(get_db)
+):
+    rows = db.query(Complaint).order_by(Complaint.created_at.desc()).all()
+    out = []
+    for c in rows:
+        emp = db.query(User).filter(User.id == c.employee_id).first()
+        out.append(
+            ComplaintWithEmployeeResponse(
+                id=c.id,
+                employee_id=c.employee_id,
+                subject=c.subject,
+                description=c.description,
+                status=c.status,
+                created_at=getattr(c, "created_at", None),
+                employee_name=emp.name if emp else None,
+            )
+        )
+    return out
+
+
+@router.patch("/complaints/{complaint_id}")
+def update_complaint_status(
+    complaint_id: int,
+    body: ComplaintStatusUpdate,
+    current_user: User = Depends(require_role("hr")),
+    db: Session = Depends(get_db)
+):
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if not complaint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found"
+        )
+    allowed = {"Open", "In Progress", "Resolved", "Closed"}
+    if body.status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"status must be one of: {allowed}"
+        )
+    complaint.status = body.status
+    db.commit()
+    return {"message": "Complaint status updated"}
 
 
 @router.post("/learning", response_model=LearningContentResponse)

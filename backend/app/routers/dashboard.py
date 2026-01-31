@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, LeaveRequest, DashboardConfig, CompliancePolicy, LearningContent, LeaveBalance
-from app.schemas import DashboardData, DashboardConfigUpdate, DashboardConfigResponse, LeaveRequestResponse, UserResponse
+from app.models import User, LeaveRequest, DashboardConfig, CompliancePolicy, LearningContent, LeaveBalance, Complaint
+from app.schemas import DashboardData, DashboardConfigUpdate, DashboardConfigResponse, LeaveRequestResponse, UserResponse, ComplaintResponse
 from app.dependencies import get_current_user
 from app.routers.leave import apply_auto_approvals
 from datetime import date, datetime
@@ -92,17 +92,34 @@ def get_dashboard(
         total_learning = db.query(LearningContent).count()
         completed_learning = db.query(UserLearningProgress).filter(UserLearningProgress.status == "completed").count()
         learning_pct = min(100, round(100 * completed_learning / total_learning, 0)) if total_learning else 0
+        open_complaints = (
+            db.query(Complaint).filter(Complaint.status.in_(["Open", "In Progress"])).order_by(Complaint.created_at.desc()).all()
+        )
+        dashboard_data.pending_complaints = [
+            ComplaintResponse(
+                id=c.id,
+                employee_id=c.employee_id,
+                subject=c.subject,
+                description=c.description,
+                status=c.status,
+                created_at=getattr(c, "created_at", None),
+            )
+            for c in open_complaints[:20]
+        ]
         ai_insights = []
         if len(pending_leaves_all) > 5:
             ai_insights.append(f"{len(pending_leaves_all)} leave requests pending approval across the organization.")
         if compliance_overdue > 0:
             ai_insights.append(f"{compliance_overdue} compliance policy/policies overdue.")
+        if open_complaints:
+            ai_insights.append(f"{len(open_complaints)} employee complaint(s) open. Review in Complaints tab.")
         dashboard_data.recommendations = {
             "total_employees": total_employees,
             "pending_leaves_count": len(pending_leaves_all),
             "compliance_due": compliance_due,
             "compliance_overdue": compliance_overdue,
             "learning_completion_pct": learning_pct,
+            "pending_complaints_count": len(open_complaints),
             "ai_insights": ai_insights[:5],
         }
 

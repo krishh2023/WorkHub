@@ -148,3 +148,16 @@ class PolicyAcknowledgement(Base):
     acknowledged_at = Column(DateTime, default=datetime.utcnow)
     
     user = relationship("User", backref="policy_acknowledgements")
+
+
+class Complaint(Base):
+    __tablename__ = "complaints"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    subject = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    status = Column(String, default="Open")  # Open, In Progress, Resolved, Closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    employee = relationship("User", backref="complaints")

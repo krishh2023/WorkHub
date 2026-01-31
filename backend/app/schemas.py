@@ -128,6 +128,31 @@ class ComplianceCategoryRulesByCategory(BaseModel):
     finance: List[ComplianceCategoryRuleResponse] = []
 
 
+class ComplaintCreate(BaseModel):
+    subject: str
+    description: str
+
+
+class ComplaintResponse(BaseModel):
+    id: int
+    employee_id: int
+    subject: str
+    description: str
+    status: str
+    created_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class ComplaintWithEmployeeResponse(ComplaintResponse):
+    employee_name: Optional[str] = None
+
+
+class ComplaintStatusUpdate(BaseModel):
+    status: str  # Open, In Progress, Resolved, Closed
+
+
 class LearningContentCreate(BaseModel):
     title: str
     tags: List[str] = []
@@ -207,6 +232,7 @@ class DashboardData(BaseModel):
     recommendations: dict = {}
     team_members: List[UserResponse] = []
     pending_leaves: List[LeaveRequestResponse] = []
+    pending_complaints: List[ComplaintResponse] = []
     config: Optional[DashboardConfigResponse] = None
 
 

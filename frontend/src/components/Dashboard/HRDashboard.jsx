@@ -17,12 +17,18 @@ import {
   TableRow,
   Paper,
   Skeleton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Alert,
 } from '@mui/material';
 import PeopleIcon from '@mui/icons-material/People';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import SchoolIcon from '@mui/icons-material/School';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import UserManagement from '../Admin/UserManagement';
 import ComplianceManagement from '../Admin/ComplianceManagement';
 import ComplianceRules from '../HRPortal/ComplianceRules';
@@ -66,24 +72,57 @@ const KPICard = ({ title, value, icon: Icon, subtitle, color = 'primary' }) => (
   </Card>
 );
 
+const STATUS_OPTIONS = ['Open', 'In Progress', 'Resolved', 'Closed'];
+
 const HRDashboard = () => {
   const [tabValue, setTabValue] = useState(0);
   const [commandData, setCommandData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [complaintsList, setComplaintsList] = useState([]);
+  const [complaintsLoading, setComplaintsLoading] = useState(false);
+
+  const loadDashboard = async () => {
+    try {
+      const res = await api.get('/dashboard');
+      setCommandData(res.data);
+    } catch (err) {
+      console.error('Failed to load HR dashboard:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await api.get('/dashboard');
-        setCommandData(res.data);
-      } catch (err) {
-        console.error('Failed to load HR dashboard:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    loadDashboard();
   }, []);
+
+  const loadComplaints = async () => {
+    setComplaintsLoading(true);
+    try {
+      const res = await api.get('/admin/complaints');
+      setComplaintsList(res.data || []);
+    } catch (err) {
+      console.error('Failed to load complaints:', err);
+      setComplaintsList([]);
+    } finally {
+      setComplaintsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tabValue === 4) loadComplaints();
+  }, [tabValue]);
+
+  const handleComplaintStatusChange = async (complaintId, newStatus) => {
+    try {
+      await api.patch(`/admin/complaints/${complaintId}`, { status: newStatus });
+      loadComplaints();
+      loadDashboard();
+    } catch (err) {
+      console.error('Failed to update complaint:', err);
+      alert(err.response?.data?.detail || 'Failed to update status');
+    }
+  };
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -91,6 +130,7 @@ const HRDashboard = () => {
 
   const rec = commandData?.recommendations || {};
   const pendingLeaves = commandData?.pending_leaves || [];
+  const pendingComplaintsCount = rec.pending_complaints_count ?? 0;
   const aiInsights = Array.isArray(rec.ai_insights) ? rec.ai_insights : [];
 
   return (
@@ -115,7 +155,7 @@ const HRDashboard = () => {
       ) : (
         <>
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid item xs={12} sm={6} md={2.4}>
               <KPICard
                 title="Total employees"
                 value={rec.total_employees ?? 0}
@@ -123,7 +163,7 @@ const HRDashboard = () => {
                 color="primary"
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid item xs={12} sm={6} md={2.4}>
               <KPICard
                 title="Pending leave approvals"
                 value={rec.pending_leaves_count ?? pendingLeaves.length}
@@ -131,7 +171,15 @@ const HRDashboard = () => {
                 color="warning"
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid item xs={12} sm={6} md={2.4}>
+              <KPICard
+                title="Employee complaints (open)"
+                value={pendingComplaintsCount}
+                icon={ReportProblemIcon}
+                color="warning"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={2.4}>
               <KPICard
                 title="Compliance due"
                 value={rec.compliance_due ?? 0}
@@ -140,7 +188,7 @@ const HRDashboard = () => {
                 color="info"
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid item xs={12} sm={6} md={2.4}>
               <KPICard
                 title="Learning completion"
                 value={`${rec.learning_completion_pct ?? 0}%`}
@@ -149,6 +197,12 @@ const HRDashboard = () => {
               />
             </Grid>
           </Grid>
+
+          {pendingComplaintsCount > 0 && (
+            <Alert severity="warning" sx={{ mb: 2 }} onClose={() => {}}>
+              You have {pendingComplaintsCount} open employee complaint(s). Review and update status in the Complaints tab.
+            </Alert>
+          )}
 
           {(pendingLeaves.length > 0 || aiInsights.length > 0) && (
             <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -230,6 +284,7 @@ const HRDashboard = () => {
           <Tab label="Compliance Policies" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab label="Compliance & Rules" sx={{ textTransform: 'none', fontWeight: 600 }} />
           <Tab label="Learning Content" sx={{ textTransform: 'none', fontWeight: 600 }} />
+          <Tab label="Complaints" sx={{ textTransform: 'none', fontWeight: 600 }} />
         </Tabs>
       </Box>
 
@@ -238,6 +293,58 @@ const HRDashboard = () => {
         {tabValue === 1 && <ComplianceManagement />}
         {tabValue === 2 && <ComplianceRules />}
         {tabValue === 3 && <LearningManagement />}
+        {tabValue === 4 && (
+          <Box>
+            <Typography variant="h6" gutterBottom>Employee complaints</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Review and update status of complaints raised by employees.
+            </Typography>
+            {complaintsLoading ? (
+              <Skeleton variant="rectangular" height={200} sx={{ borderRadius: 2 }} />
+            ) : complaintsList.length === 0 ? (
+              <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}>
+                <Typography color="text.secondary">No complaints yet.</Typography>
+              </Paper>
+            ) : (
+              <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
+                      <TableCell sx={{ fontWeight: 600 }}>Employee</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>Subject</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>Submitted</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {complaintsList.map((c) => (
+                      <TableRow key={c.id} hover>
+                        <TableCell>{c.employee_name || '—'}</TableCell>
+                        <TableCell>{c.subject}</TableCell>
+                        <TableCell sx={{ maxWidth: 280 }}>{c.description}</TableCell>
+                        <TableCell>
+                          <FormControl size="small" sx={{ minWidth: 140 }} variant="outlined">
+                            <Select
+                              value={c.status}
+                              onChange={(e) => handleComplaintStatusChange(c.id, e.target.value)}
+                              displayEmpty
+                            >
+                              {STATUS_OPTIONS.map((opt) => (
+                                <MenuItem key={opt} value={opt}>{opt}</MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        </TableCell>
+                        <TableCell>{c.created_at ? format(new Date(c.created_at), 'MMM d, yyyy HH:mm') : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        )}
       </Box>
     </Container>
   );
