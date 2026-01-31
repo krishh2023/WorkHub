@@ -16,6 +16,7 @@ import Learning from './components/Learning/Learning';
 import Career from './components/Career/Career';
 import Wellness from './components/Wellness/Wellness';
 import Compliance from './components/Compliance/Compliance';
+import Complaints from './components/Complaints/Complaints';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import Echo from './components/Chatbot/Echo';
 import HRNavbar from './components/HRPortal/HRNavbar';
@@ -302,6 +303,16 @@ function App() {
                 <ProtectedRoute>
                   <Navbar />
                   <Compliance />
+                  <Echo />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/complaints"
+              element={
+                <ProtectedRoute>
+                  <Navbar />
+                  <Complaints />
                   <Echo />
                 </ProtectedRoute>
               }
