@@ -253,6 +253,17 @@ class RecommendationResponse(BaseModel):
     skill_gaps: List[str] = []
     role_based_certifications: List[str] = []
     learning_paths: List[LearningPath] = []
+    # GPT-powered personalized suggestions (Option B)
+    ai_learning_suggestions: Optional[List[dict]] = None  # [{ "title", "reason" }]
+    ai_certification_suggestions: Optional[List[dict]] = None  # [{ "name", "reason" }]
+    ai_personalized_summary: Optional[str] = None
+    ai_fallback: bool = False  # True when GPT unavailable or failed
+    ai_error_message: Optional[str] = None  # e.g. api_key_missing, gpt_error
+
+
+class AISuggestionProgressUpdate(BaseModel):
+    key: str
+    status: str  # in_progress, completed
 
 
 class ChatbotRequest(BaseModel):

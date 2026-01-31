@@ -2,20 +2,35 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from app.database import get_db
-from app.models import User, LearningContent, CompliancePolicy
+from app.models import User, LearningContent, CompliancePolicy, UserAISuggestionProgress
 from app.schemas import (
     RecommendationResponse,
     LearningContentResponse,
     CompliancePolicyResponse,
     LearningPath,
     LearningPathStep,
+    AISuggestionProgressUpdate,
 )
 from app.dependencies import get_current_user
 from app.config import settings
-from datetime import date
+from datetime import date, datetime
 import json
+import hashlib
+import urllib.parse
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
+
+
+def _ai_suggestion_key(typ: str, title_or_name: str, reason: str) -> str:
+    """Stable key for an AI suggestion (for progress tracking)."""
+    raw = f"{typ}_{title_or_name}_{reason}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _sample_video_url(title_or_name: str) -> str:
+    """Sample reference: YouTube search for the topic."""
+    return "https://www.youtube.com/results?search_query=" + urllib.parse.quote(title_or_name or "learning")
+
 
 # Role/department -> suggested certifications for AI recommendations
 ROLE_BASED_CERTS = {
@@ -335,7 +350,90 @@ def get_recommendations(
                 break
     else:
         effective_role = current_user.role.lower()
-    
+
+    # GPT-first: personalized learning + certification suggestions from profile
+    ai_learning_suggestions = None
+    ai_certification_suggestions = None
+    ai_personalized_summary = None
+    ai_fallback = True
+    ai_error_message = None
+    position_str = f"{effective_role.title()} in {current_user.department}"
+    goals_str = ", ".join(career_goals[:5]) if career_goals else "none specified"
+    skills_str = ", ".join(s for s in user_skills[:15] if isinstance(s, str)) if user_skills else "none specified"
+    interests_str = ", ".join(i for i in user_interests[:15] if isinstance(i, str)) if user_interests else "none specified"
+
+    if not (settings.api_key and settings.api_key.strip()):
+        ai_error_message = "api_key_missing"
+    else:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.api_key.strip())
+            prompt = f"""You are a learning and career advisor. Based on this employee profile, suggest personalized learning courses and certifications.
+
+Profile:
+- Position: {position_str}
+- Skills: {skills_str}
+- Interests: {interests_str}
+- Career goals: {goals_str}
+
+Return ONLY valid JSON (no markdown, no code block) with this exact structure:
+{{"learning_suggestions": [{{"title": "Course or topic name", "reason": "Short reason why"}}, ...], "certification_suggestions": [{{"name": "Certification name", "reason": "Short reason why"}}, ...]}}
+
+Provide 5-8 learning suggestions and 3-5 certification suggestions. Be specific and relevant to their skills, interests, and position."""
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+            )
+            if completion.choices and completion.choices[0].message.content:
+                raw = completion.choices[0].message.content.strip()
+                # Strip markdown code fences: remove first line if ``` or ```json, then trailing ```
+                if raw.startswith("```"):
+                    raw = raw.split("\n", 1)[-1] if "\n" in raw else raw[3:].lstrip()
+                if raw.endswith("```"):
+                    raw = raw.rsplit("```", 1)[0].strip()
+                raw = raw.strip()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    # GPT sometimes returns trailing text; decode first JSON object only
+                    dec = json.JSONDecoder()
+                    data, _ = dec.raw_decode(raw)
+                # Accept snake_case or camelCase
+                ls = data.get("learning_suggestions") or data.get("learningSuggestions")
+                cs = data.get("certification_suggestions") or data.get("certificationSuggestions")
+                # #region agent log
+                _dbg("GPT parsed", {"ls_type": type(ls).__name__, "cs_type": type(cs).__name__, "ls_len": len(ls) if isinstance(ls, list) else None, "cs_len": len(cs) if isinstance(cs, list) else None}, "B")
+                # #endregion
+                if isinstance(ls, list) and isinstance(cs, list):
+                    ai_learning_suggestions = []
+                    for x in [x for x in ls if isinstance(x, dict)][:8]:
+                        title = x.get("title", "")
+                        reason = x.get("reason", "")
+                        key = _ai_suggestion_key("learning", title, reason)
+                        video_url = _sample_video_url(title)
+                        ai_learning_suggestions.append({"title": title, "reason": reason, "video_url": video_url, "key": key})
+                    ai_certification_suggestions = []
+                    for x in [x for x in cs if isinstance(x, dict)][:5]:
+                        name = x.get("name", "")
+                        reason = x.get("reason", "")
+                        key = _ai_suggestion_key("cert", name, reason)
+                        video_url = _sample_video_url(name)
+                        ai_certification_suggestions.append({"name": name, "reason": reason, "video_url": video_url, "key": key})
+                    if ai_learning_suggestions or ai_certification_suggestions:
+                        ai_personalized_summary = "Personalized based on your skills, interests, and position."
+                        ai_fallback = False
+                else:
+                    ai_error_message = "gpt_error"
+            else:
+                ai_error_message = "gpt_error"
+        except Exception as e:
+            # #region agent log
+            _dbg("GPT exception", {"error_type": type(e).__name__, "error_msg": str(e)[:200]}, "C")
+            # #endregion
+            ai_fallback = True
+            ai_error_message = "gpt_error"
+
     all_learning = db.query(LearningContent).all()
     all_compliance = db.query(CompliancePolicy).filter(
         or_(
@@ -434,38 +532,40 @@ def get_recommendations(
                 f"Please ensure completion."
             )
 
-    if settings.api_key and settings.api_key.strip():
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=settings.api_key.strip())
-            learning_titles = [c.title for c in top_learning[:5]]
-            compliance_titles = [p.title for p in compliance_list[:2]]
-            goals_str = ", ".join(career_goals[:3]) if career_goals else "none specified"
-            role_display = effective_role.title() if effective_role != current_user.role.lower() else current_user.role
-            prompt = (
-                f"The user is a {role_display} in {current_user.department}. "
-                f"Their career goals: {goals_str}. "
-                f"Recommended learning: {', '.join(learning_titles) or 'none'}. "
-                f"Relevant compliance: {', '.join(compliance_titles) or 'none'}. "
-                f"Write one or two short sentences explaining why these recommendations fit this user. Be concise."
-            )
-            completion = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-            )
-            if completion.choices and completion.choices[0].message.content:
-                ai_summary = completion.choices[0].message.content.strip()
-                if ai_summary:
-                    explanations.insert(0, ai_summary)
-        except Exception:
-            pass
+    # When GPT personalized suggestions succeeded, add summary to explanations
+    if ai_personalized_summary:
+        explanations.insert(0, ai_personalized_summary)
+
+    # Merge AI suggestion progress (started/complete) into ai_learning_suggestions and ai_certification_suggestions
+    # #region agent log
+    _dbg("before merge", {"ai_learning_len": len(ai_learning_suggestions) if ai_learning_suggestions else 0, "ai_cert_len": len(ai_certification_suggestions) if ai_certification_suggestions else 0, "ai_fallback": ai_fallback}, "E")
+    # #endregion
+    if ai_learning_suggestions or ai_certification_suggestions:
+        all_keys = [item["key"] for item in (ai_learning_suggestions or [])] + [item["key"] for item in (ai_certification_suggestions or [])]
+        if all_keys:
+            rows = db.query(UserAISuggestionProgress).filter(
+                UserAISuggestionProgress.user_id == current_user.id,
+                UserAISuggestionProgress.suggestion_key.in_(all_keys),
+            ).all()
+            progress_map = {r.suggestion_key: r.status for r in rows}
+            for item in (ai_learning_suggestions or []):
+                item["status"] = progress_map.get(item["key"], "not_started")
+            for item in (ai_certification_suggestions or []):
+                item["status"] = progress_map.get(item["key"], "not_started")
+        else:
+            for item in (ai_learning_suggestions or []):
+                item["status"] = "not_started"
+            for item in (ai_certification_suggestions or []):
+                item["status"] = "not_started"
 
     def tags_list(c):
         if isinstance(c.tags, list):
             return c.tags
         return json.loads(c.tags) if c.tags else []
 
+    # #region agent log
+    _dbg("before return", {"ai_learning_len": len(ai_learning_suggestions) if ai_learning_suggestions else 0, "ai_cert_len": len(ai_certification_suggestions) if ai_certification_suggestions else 0}, "E")
+    # #endregion
     return RecommendationResponse(
         learning_content=[
             LearningContentResponse(
@@ -489,7 +589,45 @@ def get_recommendations(
         skill_gaps=skill_gaps,
         role_based_certifications=role_based_certifications,
         learning_paths=learning_paths,
+        ai_learning_suggestions=ai_learning_suggestions,
+        ai_certification_suggestions=ai_certification_suggestions,
+        ai_personalized_summary=ai_personalized_summary,
+        ai_fallback=ai_fallback,
+        ai_error_message=ai_error_message,
     )
+
+
+@router.patch("/ai-progress")
+def update_ai_suggestion_progress(
+    body: AISuggestionProgressUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark an AI suggestion as in_progress (e.g. user opened video) or completed."""
+    if body.status not in ("in_progress", "completed"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status must be in_progress or completed")
+    progress = (
+        db.query(UserAISuggestionProgress)
+        .filter(
+            UserAISuggestionProgress.user_id == current_user.id,
+            UserAISuggestionProgress.suggestion_key == body.key,
+        )
+        .first()
+    )
+    if progress:
+        progress.status = body.status
+        if body.status == "completed":
+            progress.completed_at = datetime.utcnow()
+    else:
+        progress = UserAISuggestionProgress(
+            user_id=current_user.id,
+            suggestion_key=body.key,
+            status=body.status,
+            completed_at=datetime.utcnow() if body.status == "completed" else None,
+        )
+        db.add(progress)
+    db.commit()
+    return {"message": "Progress updated"}
 
 
 @router.get("/team-compliance", response_model=RecommendationResponse)

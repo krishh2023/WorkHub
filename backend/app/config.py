@@ -1,5 +1,10 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
 import os
+
+# Load .env from backend directory so API_KEY is found regardless of CWD
+_backend_dir = Path(__file__).resolve().parent.parent
+_env_file = _backend_dir / ".env"
 
 
 class Settings(BaseSettings):
@@ -17,7 +22,7 @@ class Settings(BaseSettings):
     api_key: str = ""
 
     class Config:
-        env_file = ".env"
+        env_file = str(_env_file)
         # Allow reading from environment variables with different cases
         case_sensitive = False
 

@@ -30,6 +30,8 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import SchoolIcon from '@mui/icons-material/School';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import Link from '@mui/material/Link';
 import BackToDashboard from '../common/BackToDashboard';
 import api from '../../services/api';
 import { format } from 'date-fns';
@@ -49,6 +51,10 @@ const Learning = () => {
     role_based_certifications: [],
     learning_paths: [],
     explanations: [],
+    ai_learning_suggestions: null,
+    ai_certification_suggestions: null,
+    ai_personalized_summary: null,
+    ai_fallback: false,
   });
   const [certifications, setCertifications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +109,14 @@ const Learning = () => {
     setLoading(true);
     try {
       const res = await api.get('/recommendations');
-      setData(res.data || {});
+      const d = res.data || {};
+      setData(d);
+      // #region agent log
+      const aiLearn = d.ai_learning_suggestions;
+      const aiCert = d.ai_certification_suggestions;
+      const hasAi = (Array.isArray(aiLearn) && aiLearn.length > 0) || (Array.isArray(aiCert) && aiCert.length > 0);
+      fetch('http://127.0.0.1:7243/ingest/c97bdf2a-ba3b-4d68-ac8d-51af73b942ab', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'Learning.jsx:loadRecommendations', message: 'recommendations response', data: { ai_learning_len: Array.isArray(aiLearn) ? aiLearn.length : (aiLearn == null ? 'null' : 'not-array'), ai_cert_len: Array.isArray(aiCert) ? aiCert.length : (aiCert == null ? 'null' : 'not-array'), hasAiSuggestions: hasAi, ai_fallback: d.ai_fallback }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'D' }) }).catch(() => {});
+      // #endregion
     } catch (err) {
       console.error('Failed to load recommendations:', err);
     } finally {
@@ -191,10 +204,31 @@ const Learning = () => {
     }
   };
 
+  const handleAiProgress = async (key, status) => {
+    try {
+      await api.patch('/recommendations/ai-progress', { key, status });
+      loadRecommendations();
+    } catch (err) {
+      console.error('Failed to update AI suggestion progress:', err);
+    }
+  };
+
+  const handleOpenVideo = (item) => {
+    const url = item.video_url;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    if (item.status === 'not_started') handleAiProgress(item.key, 'in_progress');
+  };
+
   const skillGaps = data.skill_gaps || [];
   const roleCerts = data.role_based_certifications || [];
   const learningPaths = data.learning_paths || [];
   const compliancePolicies = data.compliance_policies || [];
+  const aiLearningSuggestions = data.ai_learning_suggestions || [];
+  const aiCertSuggestions = data.ai_certification_suggestions || [];
+  const aiFallback = data.ai_fallback === true;
+  const aiErrorMessage = data.ai_error_message || null;
+  const hasAiSuggestions = Array.isArray(aiLearningSuggestions) && aiLearningSuggestions.length > 0 ||
+    Array.isArray(aiCertSuggestions) && aiCertSuggestions.length > 0;
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -383,6 +417,97 @@ const Learning = () => {
 
       {tab === TAB_KEYS.ai && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {aiFallback && (
+            <Alert severity="info" onClose={() => {}}>
+              {aiErrorMessage === 'api_key_missing'
+                ? 'Personalized AI recommendations are disabled. Set API_KEY in backend .env to enable.'
+                : 'Personalized AI recommendations unavailable; showing default suggestions.'}
+            </Alert>
+          )}
+          {hasAiSuggestions && (
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>Recommended for you (based on your profile)</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Personalized using your skills, interests, and position.
+              </Typography>
+              {Array.isArray(aiLearningSuggestions) && aiLearningSuggestions.length > 0 && (
+                <Paper elevation={2} sx={{ p: 2, mb: 2 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Learning & courses</Typography>
+                  <List dense disablePadding>
+                    {aiLearningSuggestions.map((item, idx) => {
+                      const status = item.status || 'not_started';
+                      return (
+                        <ListItem key={item.key || idx} sx={{ py: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                          <ListItemText
+                            primary={item.title || '—'}
+                            secondary={item.reason || null}
+                            primaryTypographyProps={{ fontWeight: 500 }}
+                            sx={{ flex: '1 1 auto', minWidth: 0 }}
+                          />
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: { xs: 1, sm: 0 } }}>
+                            {item.video_url && (
+                              <Link
+                                component="button"
+                                variant="body2"
+                                onClick={() => handleOpenVideo(item)}
+                                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, cursor: 'pointer' }}
+                              >
+                                <OpenInNewIcon sx={{ fontSize: 18 }} /> Watch sample
+                              </Link>
+                            )}
+                            <Chip size="small" label={status === 'completed' ? 'Completed' : status === 'in_progress' ? 'In progress' : 'Not started'} color={status === 'completed' ? 'success' : 'default'} />
+                            {status !== 'completed' && (
+                              <Button size="small" variant="outlined" startIcon={<CheckCircleOutlineIcon />} onClick={() => handleAiProgress(item.key, 'completed')}>
+                                Mark complete
+                              </Button>
+                            )}
+                          </Box>
+                        </ListItem>
+                      );
+                    })}
+                  </List>
+                </Paper>
+              )}
+              {Array.isArray(aiCertSuggestions) && aiCertSuggestions.length > 0 && (
+                <Paper elevation={2} sx={{ p: 2 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Certifications</Typography>
+                  <List dense disablePadding>
+                    {aiCertSuggestions.map((item, idx) => {
+                      const status = item.status || 'not_started';
+                      return (
+                        <ListItem key={item.key || idx} sx={{ py: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                          <ListItemText
+                            primary={item.name || '—'}
+                            secondary={item.reason || null}
+                            primaryTypographyProps={{ fontWeight: 500 }}
+                            sx={{ flex: '1 1 auto', minWidth: 0 }}
+                          />
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: { xs: 1, sm: 0 } }}>
+                            {item.video_url && (
+                              <Link
+                                component="button"
+                                variant="body2"
+                                onClick={() => handleOpenVideo(item)}
+                                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, cursor: 'pointer' }}
+                              >
+                                <OpenInNewIcon sx={{ fontSize: 18 }} /> Watch sample
+                              </Link>
+                            )}
+                            <Chip size="small" label={status === 'completed' ? 'Completed' : status === 'in_progress' ? 'In progress' : 'Not started'} color={status === 'completed' ? 'success' : 'default'} />
+                            {status !== 'completed' && (
+                              <Button size="small" variant="outlined" startIcon={<CheckCircleOutlineIcon />} onClick={() => handleAiProgress(item.key, 'completed')}>
+                                Mark complete
+                              </Button>
+                            )}
+                          </Box>
+                        </ListItem>
+                      );
+                    })}
+                  </List>
+                </Paper>
+              )}
+            </Box>
+          )}
           <Box>
             <Typography variant="h6" sx={{ mb: 1 }}>Personalized learning paths</Typography>
             {loading ? (

@@ -161,3 +161,16 @@ class Complaint(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     employee = relationship("User", backref="complaints")
+
+
+class UserAISuggestionProgress(Base):
+    """Progress for AI-recommended learning/cert suggestions (video link + started/complete)."""
+    __tablename__ = "user_ai_suggestion_progress"
+    
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    suggestion_key = Column(String(64), primary_key=True)
+    suggestion_type = Column(String(32), nullable=True)  # learning, cert
+    status = Column(String(32), default="not_started")  # not_started, in_progress, completed
+    completed_at = Column(DateTime, nullable=True)
+    
+    user = relationship("User", backref="ai_suggestion_progress")
